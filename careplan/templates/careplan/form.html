@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Care Plan Generator</title>
+  <style>
+    body { font-family: sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.25rem; }
+    label { display: block; margin-top: 0.75rem; font-weight: 600; }
+    input, textarea { width: 100%; padding: 0.4rem; box-sizing: border-box; }
+    textarea { min-height: 80px; }
+    button { margin-top: 1rem; padding: 0.5rem 1rem; cursor: pointer; }
+    #result { margin-top: 1.5rem; padding: 1rem; background: #f0f0f0; white-space: pre-wrap; }
+    .loading { color: #666; }
+  </style>
+</head>
+<body>
+  <h1>Care Plan Generator</h1>
+  <form id="form">
+    <label>Patient First Name</label>
+    <input type="text" name="patient_first_name" />
+    <label>Patient Last Name</label>
+    <input type="text" name="patient_last_name" />
+    <label>Referring Provider</label>
+    <input type="text" name="referring_provider" />
+    <label>Referring Provider NPI (10 digits)</label>
+    <input type="text" name="referring_provider_npi" />
+    <label>Patient MRN</label>
+    <input type="text" name="patient_mrn" />
+    <label>Patient Primary Diagnosis (ICD-10)</label>
+    <input type="text" name="patient_primary_diagnosis" />
+    <label>Medication Name</label>
+    <input type="text" name="medication_name" />
+    <label>Additional Diagnoses (ICD-10, comma-separated)</label>
+    <input type="text" name="additional_diagnoses" />
+    <label>Medication History</label>
+    <textarea name="medication_history"></textarea>
+    <label>Patient Records (text)</label>
+    <textarea name="patient_records"></textarea>
+    <button type="submit">Generate Care Plan</button>
+  </form>
+  <div id="result"></div>
+
+  <script>
+    document.getElementById('form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var result = document.getElementById('result');
+      result.innerHTML = '<span class="loading">Generating care plan...</span>';
+      var form = e.target;
+      var data = {};
+      ['patient_first_name', 'patient_last_name', 'referring_provider', 'referring_provider_npi',
+       'patient_mrn', 'patient_primary_diagnosis', 'medication_name', 'additional_diagnoses',
+       'medication_history', 'patient_records'].forEach(function (name) {
+        data[name] = form.elements[name].value;
+      });
+      fetch('/api/generate-careplan/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      })
+      .then(function (r) { return r.json(); })
+      .then(function (json) {
+        result.innerHTML = json.care_plan_text || json.error || 'No content';
+      })
+      .catch(function (err) {
+        result.innerHTML = 'Error: ' + err.message;
+      });
+    });
+  </script>
+</body>
+</html>
