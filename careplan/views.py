@@ -78,3 +78,10 @@ def generate_careplan(request):
         'care_plan_id': care_plan_id,
         'care_plan_text': care_plan_text,
     })
+
+@require_GET
+def get_careplan(request, care_plan_id):
+    care_plan = care_plans_store.get(care_plan_id)
+    if care_plan is None:
+        return JsonResponse({'error': 'not found'}, status=404)
+    return JsonResponse(care_plan)
