@@ -12,11 +12,24 @@
     textarea { min-height: 80px; }
     button { margin-top: 1rem; padding: 0.5rem 1rem; cursor: pointer; }
     #result { margin-top: 1.5rem; padding: 1rem; background: #f0f0f0; white-space: pre-wrap; }
+    #result .download-link { display: inline-block; margin-top: 0.5rem; }
     .loading { color: #666; }
+    .search-item { padding: 0.5rem; border: 1px solid #ddd; margin-bottom: 0.25rem; }
+    .search-item a { margin-right: 0.75rem; }
   </style>
 </head>
 <body>
   <h1>Care Plan Generator</h1>
+
+  <div style="margin-bottom: 1.5rem;">
+    <label>Search care plans</label>
+    <div style="display: flex; gap: 0.5rem; margin-top: 0.25rem;">
+      <input type="text" id="searchInput" placeholder="Patient name or content..." style="flex: 1;" />
+      <button type="button" id="searchBtn">Search</button>
+    </div>
+    <div id="searchResults" style="margin-top: 0.5rem;"></div>
+  </div>
+
   <form id="form">
     <label>Patient First Name</label>
     <input type="text" name="patient_first_name" />
@@ -61,11 +74,57 @@
       })
       .then(function (r) { return r.json(); })
       .then(function (json) {
-        result.innerHTML = json.care_plan_text || json.error || 'No content';
+        var html = (json.care_plan_text || json.error || 'No content');
+        if (json.care_plan_id) {
+          html += '<br><a class="download-link" href="/api/careplan/' + json.care_plan_id + '/download/" download>Download</a>';
+        }
+        result.innerHTML = html;
       })
       .catch(function (err) {
         result.innerHTML = 'Error: ' + err.message;
       });
+    });
+
+    document.getElementById('searchBtn').addEventListener('click', function () {
+      var q = document.getElementById('searchInput').value;
+      var container = document.getElementById('searchResults');
+      container.innerHTML = 'Searching...';
+      fetch('/api/careplan/search/?q=' + encodeURIComponent(q))
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          var results = data.results || [];
+          if (results.length === 0) {
+            container.innerHTML = 'No care plans found.';
+            return;
+          }
+          var html = '';
+          results.forEach(function (cp) {
+            var name = (cp.patient_first_name || '') + ' ' + (cp.patient_last_name || '');
+            html += '<div class="search-item">' +
+              'ID: ' + cp.id + ' — ' + name +
+              ' <a href="#" class="view-careplan" data-id="' + cp.id + '">View</a>' +
+              ' <a href="/api/careplan/' + cp.id + '/download/" download>Download</a>' +
+              '</div>';
+          });
+          container.innerHTML = html;
+        })
+        .catch(function (err) {
+          container.innerHTML = 'Search failed: ' + err.message;
+        });
+    });
+
+    document.getElementById('searchResults').addEventListener('click', function (e) {
+      if (e.target.classList.contains('view-careplan')) {
+        e.preventDefault();
+        var id = e.target.getAttribute('data-id');
+        fetch('/api/careplan/' + id + '/')
+          .then(function (r) { return r.json(); })
+          .then(function (cp) {
+            var result = document.getElementById('result');
+            result.innerHTML = (cp.care_plan_text || '') +
+              '<br><a class="download-link" href="/api/careplan/' + cp.id + '/download/" download>Download</a>';
+          });
+      }
     });
   </script>
 </body>

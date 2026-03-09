@@ -1,6 +1,6 @@
 import json
 from django.shortcuts import render
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 from openai import OpenAI
@@ -85,3 +85,31 @@ def get_careplan(request, care_plan_id):
     if care_plan is None:
         return JsonResponse({'error': 'not found'}, status=404)
     return JsonResponse(care_plan)
+
+
+@require_GET
+def search_careplans(request):
+    q = (request.GET.get('q') or '').strip().lower()
+    if not q:
+        results = list(care_plans_store.values())
+    else:
+        results = []
+        for cp in care_plans_store.values():
+            if (q in (cp.get('patient_first_name') or '').lower() or
+                q in (cp.get('patient_last_name') or '').lower() or
+                q in (cp.get('care_plan_text') or '').lower()):
+                results.append(cp)
+    return JsonResponse({'results': results})
+
+
+@require_GET
+def download_careplan(request, care_plan_id):
+    care_plan = care_plans_store.get(care_plan_id)
+    if care_plan is None:
+        return JsonResponse({'error': 'not found'}, status=404)
+    name = f"{care_plan.get('patient_first_name', '')}_{care_plan.get('patient_last_name', '')}".strip() or 'careplan'
+    filename = f"careplan_{care_plan_id}_{name}.txt"
+    content = care_plan.get('care_plan_text', '')
+    response = HttpResponse(content, content_type='text/plain; charset=utf-8')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
