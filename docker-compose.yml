@@ -1,7 +1,32 @@
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-careplan}
+      - POSTGRES_USER=${POSTGRES_USER:-careplan}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-careplan}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-careplan} -d ${POSTGRES_DB:-careplan}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   web:
     build: .
     ports:
       - "8000:8000"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DATABASE_URL=postgres://${POSTGRES_USER:-careplan}:${POSTGRES_PASSWORD:-careplan}@db:5432/${POSTGRES_DB:-careplan}
+      - POSTGRES_HOST=db
+      - POSTGRES_DB=${POSTGRES_DB:-careplan}
+      - POSTGRES_USER=${POSTGRES_USER:-careplan}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-careplan}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data: {}

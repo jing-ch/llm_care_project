@@ -28,7 +28,27 @@ TEMPLATES = [{
 }]
 WSGI_APPLICATION = 'careplan_project.wsgi.application'
 
-DATABASES = {}
+# PostgreSQL from environment (used when DATABASE_URL is set, e.g. in Docker)
+_db_user = os.environ.get('POSTGRES_USER', '')
+_db_pass = os.environ.get('POSTGRES_PASSWORD', '')
+_db_name = os.environ.get('POSTGRES_DB', 'careplan')
+_db_host = os.environ.get('POSTGRES_HOST', 'localhost')
+_db_port = os.environ.get('POSTGRES_PORT', '5432')
+
+if _db_user:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': _db_name,
+            'USER': _db_user,
+            'PASSWORD': _db_pass,
+            'HOST': _db_host,
+            'PORT': _db_port,
+        }
+    }
+else:
+    DATABASES = {}
+
 STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
