@@ -1,4 +1,7 @@
 import json
+import os
+
+import redis
 from django.shortcuts import render
 from django.http import JsonResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -8,6 +11,9 @@ from openai import OpenAI
 from django.conf import settings
 
 from .models import Provider, Patient, Order, CarePlan
+
+
+redis_client = redis.Redis.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"))
 
 
 def _to_list(value):
@@ -67,11 +73,6 @@ def generate_careplan(request):
     medication_history = body.get('medication_history', '')
     patient_records = body.get('patient_records', '')
 
-    care_plan_text = _call_llm(
-        patient_first_name, patient_last_name, referring_provider, referring_provider_npi,
-        patient_mrn, primary_diagnosis, medication_name, additional_diagnoses, medication_history, patient_records
-    )
-
     provider, _ = Provider.objects.get_or_create(
         npi=referring_provider_npi.strip(),
         defaults={'name': referring_provider.strip() or 'Unknown'}
@@ -102,15 +103,23 @@ def generate_careplan(request):
     )
     care_plan = CarePlan.objects.create(
         order=order,
-        content=care_plan_text,
-        status='completed',
+        content='',
+        status='pending',
     )
     care_plan_id = care_plan.pk
 
-    return JsonResponse({
-        'care_plan_id': care_plan_id,
-        'care_plan_text': care_plan_text,
-    })
+    try:
+        redis_client.rpush("careplan_queue", care_plan_id)
+    except redis.RedisError:
+        return JsonResponse({'error': 'queue_unavailable'}, status=503)
+
+    return JsonResponse(
+        {
+            'care_plan_id': care_plan_id,
+            'status': 'pending',
+        },
+        status=202,
+    )
 
 def _care_plan_to_dict(care_plan):
     """Build API response dict from CarePlan instance (same shape as before)."""

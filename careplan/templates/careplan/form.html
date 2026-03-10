@@ -59,7 +59,7 @@
     document.getElementById('form').addEventListener('submit', function (e) {
       e.preventDefault();
       var result = document.getElementById('result');
-      result.innerHTML = '<span class="loading">Generating care plan...</span>';
+      result.innerHTML = '<span class="loading">Submitting...</span>';
       var form = e.target;
       var data = {};
       ['patient_first_name', 'patient_last_name', 'referring_provider', 'referring_provider_npi',
@@ -74,11 +74,20 @@
       })
       .then(function (r) { return r.json(); })
       .then(function (json) {
-        var html = (json.care_plan_text || json.error || 'No content');
-        if (json.care_plan_id) {
-          html += '<br><a class="download-link" href="/api/careplan/' + json.care_plan_id + '/download/" download>Download</a>';
-        }
-        result.innerHTML = html;
+          var html;
+          
+          if (json.status === 'pending') {
+              html = '✅ Received! Care plan is being generated...<br>' +
+                    'Care Plan ID: <strong>' + json.care_plan_id + '</strong>';
+          } else {
+              html = (json.care_plan_text || json.error || 'No content');
+              if (json.care_plan_id) {
+                  html += '<br><a class="download-link" href="/api/careplan/' + 
+                          json.care_plan_id + '/download/" download>Download</a>';
+              }
+          }
+          
+          result.innerHTML = html;
       })
       .catch(function (err) {
         result.innerHTML = 'Error: ' + err.message;
