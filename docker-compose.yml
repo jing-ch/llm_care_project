@@ -4,9 +4,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_DB=${POSTGRES_DB:-careplan}
-      - POSTGRES_USER=${POSTGRES_USER:-careplan}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-careplan}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
