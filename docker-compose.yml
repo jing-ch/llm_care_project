@@ -35,5 +35,21 @@ services:
     ports:
       - "6379:6379"
 
+  worker:
+    build: .
+    command: celery -A careplan_project worker --loglevel=info
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - REDIS_URL=redis://redis:6379/0
+      - POSTGRES_HOST=db
+      - POSTGRES_DB=${POSTGRES_DB:-careplan}
+      - POSTGRES_USER=${POSTGRES_USER:-careplan}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-careplan}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
 volumes:
   postgres_data: {}

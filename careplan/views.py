@@ -1,19 +1,12 @@
 import json
-import os
 
-import redis
 from django.shortcuts import render
 from django.http import JsonResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 from django.db.models import Q
-from openai import OpenAI
-from django.conf import settings
-
 from .models import Provider, Patient, Order, CarePlan
-
-
-redis_client = redis.Redis.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"))
+from .tasks import generate_careplan_task
 
 
 def _to_list(value):
@@ -24,33 +17,6 @@ def _to_list(value):
         return value
     return [str(value)]
 
-
-def _call_llm(patient_first_name, patient_last_name, referring_provider, referring_provider_npi,
-              patient_mrn, primary_diagnosis, medication_name, additional_diagnoses, medication_history, patient_records):
-    client = OpenAI(api_key=settings.OPENAI_API_KEY)
-    prompt = f"""You are a clinical pharmacist generating a care plan.
-
-Required sections:
-1. Problem list / Drug therapy problems
-2. Goals (SMART)
-3. Pharmacist interventions
-4. Monitoring plan
-
-Patient: {patient_first_name} {patient_last_name}, MRN: {patient_mrn}
-Referring Provider: {referring_provider} (NPI: {referring_provider_npi})
-Primary diagnosis: {primary_diagnosis}
-Additional diagnoses: {additional_diagnoses or 'None'}
-Medication: {medication_name}
-Medication history: {medication_history or 'None'}
-Patient records: {patient_records or 'None'}
-
-Generate the care plan in plain text with the four sections clearly labeled."""
-
-    r = client.chat.completions.create(
-        model='gpt-4o-mini',
-        messages=[{'role': 'user', 'content': prompt}],
-    )
-    return r.choices[0].message.content
 
 
 @require_GET
@@ -108,10 +74,7 @@ def generate_careplan(request):
     )
     care_plan_id = care_plan.pk
 
-    try:
-        redis_client.rpush("careplan_queue", care_plan_id)
-    except redis.RedisError:
-        return JsonResponse({'error': 'queue_unavailable'}, status=503)
+    generate_careplan_task.delay(care_plan_id)
 
     return JsonResponse(
         {
