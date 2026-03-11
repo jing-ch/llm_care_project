@@ -1,8 +1,48 @@
+import os
+import time
+
 from celery import shared_task
 from django.conf import settings
 from openai import OpenAI
 
 from .models import CarePlan
+
+MOCK_CAREPLAN = """
+CARE PLAN (MOCK)
+================
+
+1. Problem List / Drug Therapy Problems
+   - [MOCK] Hypertension, uncontrolled
+   - [MOCK] Potential drug-drug interaction identified
+
+2. Goals (SMART)
+   - Blood pressure < 130/80 mmHg within 4 weeks
+   - Patient education on medication adherence completed by next visit
+
+3. Pharmacist Interventions
+   - [MOCK] Reviewed current medication regimen
+   - [MOCK] Counseled patient on proper administration
+   - [MOCK] Recommended follow-up with prescriber
+
+4. Monitoring Plan
+   - [MOCK] Blood pressure check in 2 weeks
+   - [MOCK] Labs (BMP) in 4 weeks
+   - [MOCK] Reassess therapy at 3-month follow-up
+""".strip()
+
+
+def _call_llm(prompt: str) -> str:
+    """Call the LLM. Swaps in a mock when USE_MOCK_LLM=true."""
+    if os.environ.get("USE_MOCK_LLM", "").lower() == "true":
+        time.sleep(1)  # simulate network latency
+        return MOCK_CAREPLAN
+
+    client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.choices[0].message.content
 
 
 def _build_prompt(order):
@@ -49,13 +89,8 @@ def generate_careplan_task(self, care_plan_id: int):
     care_plan.save(update_fields=["status", "updated_at"])
 
     try:
-        client = OpenAI(api_key=settings.OPENAI_API_KEY)
         prompt = _build_prompt(care_plan.order)
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-        )
-        content = response.choices[0].message.content
+        content = _call_llm(prompt)
 
         care_plan.content = content
         care_plan.status = "completed"

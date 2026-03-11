@@ -40,6 +40,7 @@ services:
     command: celery -A careplan_project worker --loglevel=info
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - USE_MOCK_LLM=${USE_MOCK_LLM:-false}
       - REDIS_URL=redis://redis:6379/0
       - POSTGRES_HOST=db
       - POSTGRES_DB=${POSTGRES_DB:-careplan}
