@@ -96,6 +96,21 @@ def _care_plan_to_dict(care_plan):
 
 
 @require_GET
+def get_careplan_status(request, care_plan_id):
+    try:
+        care_plan = CarePlan.objects.get(pk=care_plan_id)
+    except CarePlan.DoesNotExist:
+        return JsonResponse({'error': 'not found'}, status=404)
+    response = {
+        'id': care_plan.pk,
+        'status': care_plan.status,
+    }
+    if care_plan.status == 'completed':
+        response['content'] = care_plan.content
+    return JsonResponse(response)
+
+
+@require_GET
 def get_careplan(request, care_plan_id):
     try:
         care_plan = CarePlan.objects.get(pk=care_plan_id)

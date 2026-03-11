@@ -11,130 +11,273 @@
     input, textarea { width: 100%; padding: 0.4rem; box-sizing: border-box; }
     textarea { min-height: 80px; }
     button { margin-top: 1rem; padding: 0.5rem 1rem; cursor: pointer; }
-    #result { margin-top: 1.5rem; padding: 1rem; background: #f0f0f0; white-space: pre-wrap; }
-    #result .download-link { display: inline-block; margin-top: 0.5rem; }
+    .result { margin-top: 1.5rem; padding: 1rem; background: #f0f0f0; white-space: pre-wrap; }
     .loading { color: #666; }
+    .error { color: #c00; }
     .search-item { padding: 0.5rem; border: 1px solid #ddd; margin-bottom: 0.25rem; }
     .search-item a { margin-right: 0.75rem; }
+    .status-badge { font-weight: bold; }
+    .status-pending { color: #888; }
+    .status-processing { color: #f90; }
+    .status-completed { color: #080; }
+    .status-failed { color: #c00; }
   </style>
 </head>
 <body>
-  <h1>Care Plan Generator</h1>
+  <div id="root"></div>
 
-  <div style="margin-bottom: 1.5rem;">
-    <label>Search care plans</label>
-    <div style="display: flex; gap: 0.5rem; margin-top: 0.25rem;">
-      <input type="text" id="searchInput" placeholder="Patient name or content..." style="flex: 1;" />
-      <button type="button" id="searchBtn">Search</button>
-    </div>
-    <div id="searchResults" style="margin-top: 0.5rem;"></div>
-  </div>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-  <form id="form">
-    <label>Patient First Name</label>
-    <input type="text" name="patient_first_name" />
-    <label>Patient Last Name</label>
-    <input type="text" name="patient_last_name" />
-    <label>Referring Provider</label>
-    <input type="text" name="referring_provider" />
-    <label>Referring Provider NPI (10 digits)</label>
-    <input type="text" name="referring_provider_npi" />
-    <label>Patient MRN</label>
-    <input type="text" name="patient_mrn" />
-    <label>Patient Primary Diagnosis (ICD-10)</label>
-    <input type="text" name="patient_primary_diagnosis" />
-    <label>Medication Name</label>
-    <input type="text" name="medication_name" />
-    <label>Additional Diagnoses (ICD-10, comma-separated)</label>
-    <input type="text" name="additional_diagnoses" />
-    <label>Medication History</label>
-    <textarea name="medication_history"></textarea>
-    <label>Patient Records (text)</label>
-    <textarea name="patient_records"></textarea>
-    <button type="submit">Generate Care Plan</button>
-  </form>
-  <div id="result"></div>
+  <script type="text/babel">
+{% verbatim %}
+    const { useState, useEffect, useRef, useCallback } = React;
 
-  <script>
-    document.getElementById('form').addEventListener('submit', function (e) {
-      e.preventDefault();
-      var result = document.getElementById('result');
-      result.innerHTML = '<span class="loading">Submitting...</span>';
-      var form = e.target;
-      var data = {};
-      ['patient_first_name', 'patient_last_name', 'referring_provider', 'referring_provider_npi',
-       'patient_mrn', 'patient_primary_diagnosis', 'medication_name', 'additional_diagnoses',
-       'medication_history', 'patient_records'].forEach(function (name) {
-        data[name] = form.elements[name].value;
-      });
-      fetch('/api/generate-careplan/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      })
-      .then(function (r) { return r.json(); })
-      .then(function (json) {
-          var html;
-          
-          if (json.status === 'pending') {
-              html = '✅ Received! Care plan is being generated...<br>' +
-                    'Care Plan ID: <strong>' + json.care_plan_id + '</strong>';
-          } else {
-              html = (json.care_plan_text || json.error || 'No content');
-              if (json.care_plan_id) {
-                  html += '<br><a class="download-link" href="/api/careplan/' + 
-                          json.care_plan_id + '/download/" download>Download</a>';
-              }
-          }
-          
-          result.innerHTML = html;
-      })
-      .catch(function (err) {
-        result.innerHTML = 'Error: ' + err.message;
-      });
-    });
+    // ── Polling hook ──────────────────────────────────────────────────────────
+    // Starts at 1 s, doubles each interval (cap 30 s), stops after 2 min total.
+    function useCarePlanPolling(carePlanId, onDone) {
+      const timerRef    = useRef(null);
+      const startRef    = useRef(null);
+      const intervalRef = useRef(1000);
+      const MAX_TOTAL_MS = 2 * 60 * 1000; // 2 minutes
 
-    document.getElementById('searchBtn').addEventListener('click', function () {
-      var q = document.getElementById('searchInput').value;
-      var container = document.getElementById('searchResults');
-      container.innerHTML = 'Searching...';
-      fetch('/api/careplan/search/?q=' + encodeURIComponent(q))
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-          var results = data.results || [];
-          if (results.length === 0) {
-            container.innerHTML = 'No care plans found.';
+      const stop = useCallback(() => {
+        if (timerRef.current) {
+          clearTimeout(timerRef.current);
+          timerRef.current = null;
+        }
+      }, []);
+
+      const poll = useCallback(async () => {
+        const elapsed = Date.now() - startRef.current;
+        if (elapsed >= MAX_TOTAL_MS) {
+          onDone({ status: 'timeout' });
+          return;
+        }
+
+        try {
+          const res  = await fetch(`/api/careplan/${carePlanId}/status/`);
+          const data = await res.json();
+
+          if (data.status === 'completed' || data.status === 'failed') {
+            onDone(data);
             return;
           }
-          var html = '';
-          results.forEach(function (cp) {
-            var name = (cp.patient_first_name || '') + ' ' + (cp.patient_last_name || '');
-            html += '<div class="search-item">' +
-              'ID: ' + cp.id + ' — ' + name +
-              ' <a href="#" class="view-careplan" data-id="' + cp.id + '">View</a>' +
-              ' <a href="/api/careplan/' + cp.id + '/download/" download>Download</a>' +
-              '</div>';
-          });
-          container.innerHTML = html;
-        })
-        .catch(function (err) {
-          container.innerHTML = 'Search failed: ' + err.message;
-        });
-    });
+          // still pending / processing → schedule next poll with backoff
+          intervalRef.current = Math.min(intervalRef.current * 2, 30000);
+          timerRef.current = setTimeout(poll, intervalRef.current);
+        } catch {
+          intervalRef.current = Math.min(intervalRef.current * 2, 30000);
+          timerRef.current = setTimeout(poll, intervalRef.current);
+        }
+      }, [carePlanId, onDone]);
 
-    document.getElementById('searchResults').addEventListener('click', function (e) {
-      if (e.target.classList.contains('view-careplan')) {
-        e.preventDefault();
-        var id = e.target.getAttribute('data-id');
-        fetch('/api/careplan/' + id + '/')
-          .then(function (r) { return r.json(); })
-          .then(function (cp) {
-            var result = document.getElementById('result');
-            result.innerHTML = (cp.care_plan_text || '') +
-              '<br><a class="download-link" href="/api/careplan/' + cp.id + '/download/" download>Download</a>';
-          });
+      useEffect(() => {
+        if (!carePlanId) return;
+        startRef.current   = Date.now();
+        intervalRef.current = 1000;
+        timerRef.current   = setTimeout(poll, 1000); // first poll after 1 s
+        return stop;
+      }, [carePlanId, poll, stop]);
+    }
+
+    // ── SearchSection ─────────────────────────────────────────────────────────
+    function SearchSection({ onView }) {
+      const [q, setQ]           = useState('');
+      const [results, setResults] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [error, setError]   = useState(null);
+
+      async function handleSearch() {
+        setLoading(true); setError(null);
+        try {
+          const res  = await fetch('/api/careplan/search/?q=' + encodeURIComponent(q));
+          const data = await res.json();
+          setResults(data.results || []);
+        } catch (e) {
+          setError('Search failed: ' + e.message);
+        } finally {
+          setLoading(false);
+        }
       }
-    });
+
+      return (
+        <div style={{ marginBottom: '1.5rem' }}>
+          <label>Search care plans</label>
+          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
+            <input
+              type="text"
+              value={q}
+              onChange={e => setQ(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSearch()}
+              placeholder="Patient name or content..."
+              style={{ flex: 1 }}
+            />
+            <button type="button" onClick={handleSearch}>Search</button>
+          </div>
+          {loading && <p className="loading">Searching…</p>}
+          {error   && <p className="error">{error}</p>}
+          {results !== null && results.length === 0 && <p>No care plans found.</p>}
+          {results && results.map(cp => {
+            const name = `${cp.patient_first_name || ''} ${cp.patient_last_name || ''}`.trim();
+            return (
+              <div key={cp.id} className="search-item">
+                ID: {cp.id} — {name}
+                {' '}
+                <a href="#" onClick={e => { e.preventDefault(); onView(cp.id); }}>View</a>
+                <a href={`/api/careplan/${cp.id}/download/`} download>Download</a>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    // ── StatusDisplay ─────────────────────────────────────────────────────────
+    function StatusDisplay({ carePlanId }) {
+      const [result, setResult] = useState(null); // null = still polling
+
+      const handleDone = useCallback(data => setResult(data), []);
+      useCarePlanPolling(carePlanId, handleDone);
+
+      if (!result) {
+        return (
+          <div className="result">
+            <p>
+              Care Plan ID: <strong>{carePlanId}</strong>
+            </p>
+            <p className="loading">⏳ Generating care plan… checking every few seconds.</p>
+          </div>
+        );
+      }
+
+      if (result.status === 'completed') {
+        return (
+          <div className="result">
+            <p>
+              Care Plan ID: <strong>{carePlanId}</strong>{' '}
+              <span className="status-badge status-completed">✅ Completed</span>
+            </p>
+            <pre>{result.content}</pre>
+            <a href={`/api/careplan/${carePlanId}/download/`} download>Download</a>
+          </div>
+        );
+      }
+
+      if (result.status === 'failed') {
+        return (
+          <div className="result">
+            <p>
+              Care Plan ID: <strong>{carePlanId}</strong>{' '}
+              <span className="status-badge status-failed">❌ Failed</span>
+            </p>
+            <p className="error">Care plan generation failed. Please try again.</p>
+          </div>
+        );
+      }
+
+      // timeout
+      return (
+        <div className="result">
+          <p>
+            Care Plan ID: <strong>{carePlanId}</strong>
+          </p>
+          <p className="error">
+            Still processing after 2 minutes. The care plan may complete later — note your ID and check back.
+          </p>
+        </div>
+      );
+    }
+
+    // ── GenerateForm ──────────────────────────────────────────────────────────
+    const FIELDS = [
+      { name: 'patient_first_name',      label: 'Patient First Name',                  type: 'text'     },
+      { name: 'patient_last_name',       label: 'Patient Last Name',                   type: 'text'     },
+      { name: 'referring_provider',      label: 'Referring Provider',                  type: 'text'     },
+      { name: 'referring_provider_npi',  label: 'Referring Provider NPI (10 digits)', type: 'text'     },
+      { name: 'patient_mrn',             label: 'Patient MRN',                         type: 'text'     },
+      { name: 'patient_primary_diagnosis', label: 'Patient Primary Diagnosis (ICD-10)', type: 'text'   },
+      { name: 'medication_name',         label: 'Medication Name',                     type: 'text'     },
+      { name: 'additional_diagnoses',    label: 'Additional Diagnoses (ICD-10, comma-separated)', type: 'text' },
+      { name: 'medication_history',      label: 'Medication History',                  type: 'textarea' },
+      { name: 'patient_records',         label: 'Patient Records (text)',              type: 'textarea' },
+    ];
+
+    function GenerateForm({ onSubmitted }) {
+      const [fields, setFields]   = useState(() =>
+        Object.fromEntries(FIELDS.map(f => [f.name, '']))
+      );
+      const [submitting, setSubmitting] = useState(false);
+      const [error, setError]     = useState(null);
+
+      function handleChange(e) {
+        setFields(prev => ({ ...prev, [e.target.name]: e.target.value }));
+      }
+
+      async function handleSubmit(e) {
+        e.preventDefault();
+        setSubmitting(true); setError(null);
+        try {
+          const res  = await fetch('/api/generate-careplan/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(fields),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Server error');
+          onSubmitted(data.care_plan_id);
+        } catch (e) {
+          setError('Submission failed: ' + e.message);
+        } finally {
+          setSubmitting(false);
+        }
+      }
+
+      return (
+        <form onSubmit={handleSubmit}>
+          {FIELDS.map(f => (
+            <div key={f.name}>
+              <label>{f.label}</label>
+              {f.type === 'textarea'
+                ? <textarea name={f.name} value={fields[f.name]} onChange={handleChange} />
+                : <input type="text" name={f.name} value={fields[f.name]} onChange={handleChange} />
+              }
+            </div>
+          ))}
+          {error && <p className="error">{error}</p>}
+          <button type="submit" disabled={submitting}>
+            {submitting ? 'Submitting…' : 'Generate Care Plan'}
+          </button>
+        </form>
+      );
+    }
+
+    // ── App ───────────────────────────────────────────────────────────────────
+    function App() {
+      const [activePlanId, setActivePlanId] = useState(null);
+
+      async function handleView(id) {
+        setActivePlanId(id);
+        // Jump straight to result — the status endpoint will return completed
+        // immediately for already-finished plans.
+        window.scrollTo(0, document.body.scrollHeight);
+      }
+
+      return (
+        <div>
+          <h1>Care Plan Generator</h1>
+          <SearchSection onView={handleView} />
+          <GenerateForm onSubmitted={id => setActivePlanId(id)} />
+          {activePlanId && (
+            <StatusDisplay key={activePlanId} carePlanId={activePlanId} />
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+{% endverbatim %}
   </script>
 </body>
 </html>
