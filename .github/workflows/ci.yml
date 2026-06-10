@@ -1,0 +1,58 @@
+name: CI
+
+# 每次有人对仓库提 PR 时触发;同时在 push 到 main 时也跑一遍,保证主分支始终是绿的。
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # 用 Docker 起一个 PostgreSQL 容器,和测试 job 一起运行。
+    # GitHub Actions 的 service 本质就是一个 Docker 容器,端口映射到 runner 的 localhost。
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: careplan
+          POSTGRES_USER: careplan
+          POSTGRES_PASSWORD: careplan
+        ports:
+          - 5432:5432
+        # 等 Postgres 真正可用了再往下跑,否则 migrate 会连不上。
+        options: >-
+          --health-cmd "pg_isready -U careplan -d careplan"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    # 这些环境变量喂给 Django(settings.py 从环境变量读数据库配置)。
+    # POSTGRES_HOST=localhost,因为 service 的端口映射到了 runner 本机。
+    env:
+      POSTGRES_DB: careplan
+      POSTGRES_USER: careplan
+      POSTGRES_PASSWORD: careplan
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      USE_MOCK_LLM: "true"   # 兜底:确保任何代码路径都不会真的调用 OpenAI
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"   # 和 Dockerfile 里的 python:3.12 对齐
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run Django migrations
+        run: python manage.py migrate
+
+      - name: Run pytest
+        run: pytest
