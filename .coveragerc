@@ -1,0 +1,8 @@
+[run]
+omit =
+    */migrations/*
+    */tests/*
+    careplan/__init__.py
+
+[report]
+show_missing = True
