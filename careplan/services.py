@@ -4,9 +4,11 @@ No HTTP request/response objects here.
 """
 
 from django.db.models import Q
+from django.utils import timezone
 
 from .models import Provider, Patient, Order, CarePlan
 from .tasks import generate_careplan_task
+from . import errors
 
 
 def _to_list(value):
@@ -20,42 +22,110 @@ def _to_list(value):
 
 def submit_careplan_request(data: dict) -> dict:
     """
-    Orchestrate provider/patient/order/careplan creation and enqueue the Celery task.
-    Returns a dict with care_plan_id and status.
-    """
-    provider, _ = Provider.objects.get_or_create(
-        npi=data['referring_provider_npi'].strip(),
-        defaults={'name': data['referring_provider'].strip() or 'Unknown'}
-    )
-    if provider.name != data['referring_provider'].strip():
-        provider.name = data['referring_provider'].strip() or provider.name
-        provider.save(update_fields=['name'])
+    Run the business rules, then (if clear) create provider/patient/order/careplan
+    and enqueue the Celery task. Returns {'care_plan_id', 'status'}.
 
-    patient, _ = Patient.objects.get_or_create(
-        mrn=data['patient_mrn'].strip(),
-        defaults={
-            'first_name': data['patient_first_name'].strip() or 'Unknown',
-            'last_name': data['patient_last_name'].strip() or 'Unknown',
-        }
-    )
-    patient.first_name = data['patient_first_name'].strip() or patient.first_name
-    patient.last_name = data['patient_last_name'].strip() or patient.last_name
-    patient.save(update_fields=['first_name', 'last_name'])
+    Business rules (see CLAUDE.md):
+      Provider  same NPI + different name           -> BlockError (409)
+      Patient   same MRN + different name or DOB     -> warning
+      Patient   same name + DOB + different MRN      -> warning
+      Order     same patient + same med + same day   -> BlockError (409)
+      Order     same patient + same med + other day  -> warning
+
+    Blocks raise immediately. Warnings are collected and, unless the caller has
+    set acknowledge_warnings, raised together as a WarningException (HTTP 200) so
+    the user can confirm and resubmit. Nothing is written until all checks pass.
+    """
+    acknowledge = data.get('acknowledge_warnings', False)
+    warnings = []
+
+    npi = data['referring_provider_npi'].strip()
+    provider_name = data['referring_provider'].strip()
+    mrn = data['patient_mrn'].strip()
+    first = data['patient_first_name'].strip()
+    last = data['patient_last_name'].strip()
+    dob = data.get('date_of_birth')
+    medication = data['medication_name'].strip()
+
+    # --- Provider: same NPI + different name = BLOCK; same name = reuse ---
+    provider = Provider.objects.filter(npi=npi).first()
+    if provider and provider_name and provider.name != provider_name:
+        raise errors.BlockError(
+            'A provider with this NPI already exists under a different name.',
+            code='PROVIDER_NAME_CONFLICT',
+            detail={'npi': npi, 'existing_name': provider.name, 'submitted_name': provider_name},
+        )
+
+    # --- Patient: name/DOB mismatch on a known MRN, or a twin under another MRN ---
+    patient = Patient.objects.filter(mrn=mrn).first()
+    if patient:
+        if (first or last) and (patient.first_name, patient.last_name) != (first, last):
+            warnings.append({
+                'code': 'PATIENT_NAME_MISMATCH',
+                'message': f'MRN {mrn} is already on file under a different name '
+                           f'({patient.first_name} {patient.last_name}).',
+            })
+        if dob and patient.date_of_birth and patient.date_of_birth != dob:
+            warnings.append({
+                'code': 'PATIENT_DOB_MISMATCH',
+                'message': f'MRN {mrn} is already on file with a different date of birth.',
+            })
+    if first and last and dob:
+        twin = (Patient.objects
+                .filter(first_name=first, last_name=last, date_of_birth=dob)
+                .exclude(mrn=mrn).first())
+        if twin:
+            warnings.append({
+                'code': 'PATIENT_MRN_MISMATCH',
+                'message': f'A patient with the same name and date of birth already '
+                           f'exists under MRN {twin.mrn}.',
+            })
+
+    # --- Order: same patient + same medication, same day = BLOCK, other day = warning ---
+    if patient and medication:
+        same_med = Order.objects.filter(patient=patient, medication_name=medication)
+        today = timezone.now().date()
+        if same_med.filter(created_at__date=today).exists():
+            raise errors.BlockError(
+                'An order for this patient and medication already exists today.',
+                code='DUPLICATE_ORDER_TODAY',
+                detail={'mrn': mrn, 'medication': medication},
+            )
+        if same_med.exists():
+            warnings.append({
+                'code': 'DUPLICATE_ORDER_OTHER_DAY',
+                'message': f'This patient already has an order for {medication} on another day.',
+            })
+
+    # --- Gate: hold for confirmation unless the user already acknowledged ---
+    if warnings and not acknowledge:
+        raise errors.WarningException(
+            'Please review the following before continuing.',
+            code='REVIEW_REQUIRED',
+            detail={'warnings': warnings},
+        )
+
+    # --- All clear: create/reuse and enqueue ---
+    if provider is None:
+        provider = Provider.objects.create(npi=npi, name=provider_name or 'Unknown')
+    if patient is None:
+        patient = Patient.objects.create(
+            mrn=mrn,
+            first_name=first or 'Unknown',
+            last_name=last or 'Unknown',
+            date_of_birth=dob,
+        )
 
     order = Order.objects.create(
         patient=patient,
         provider=provider,
-        medication_name=data['medication_name'].strip() or '',
-        primary_diagnosis=data['primary_diagnosis'].strip() or '',
+        medication_name=medication,
+        primary_diagnosis=data['primary_diagnosis'].strip(),
         additional_diagnoses=_to_list(data['additional_diagnoses']),
         medication_history=_to_list(data['medication_history']),
         patient_records=data['patient_records'] or '',
     )
-    care_plan = CarePlan.objects.create(
-        order=order,
-        content='',
-        status='pending',
-    )
+    care_plan = CarePlan.objects.create(order=order, content='', status='pending')
 
     generate_careplan_task.delay(care_plan.pk)
 

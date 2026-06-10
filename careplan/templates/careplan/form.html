@@ -14,6 +14,11 @@
     .result { margin-top: 1.5rem; padding: 1rem; background: #f0f0f0; white-space: pre-wrap; }
     .loading { color: #666; }
     .error { color: #c00; }
+    .notice { margin-top: 1rem; padding: 0.75rem 1rem; border-radius: 4px; }
+    .notice p { margin: 0; }
+    .notice ul { margin: 0.5rem 0 0; padding-left: 1.25rem; }
+    .notice-warning { background: #fff7e6; border: 1px solid #f0c36d; color: #7a5b00; }
+    .notice-error { background: #fde8e8; border: 1px solid #dd9999; color: #a12020; }
     .search-item { padding: 0.5rem; border: 1px solid #ddd; margin-bottom: 0.25rem; }
     .search-item a { margin-right: 0.75rem; }
     .status-badge { font-weight: bold; }
@@ -204,35 +209,89 @@
       { name: 'patient_records',         label: 'Patient Records (text)',              type: 'textarea' },
     ];
 
+    const LABELS = Object.fromEntries(FIELDS.map(f => [f.name, f.label]));
+
+    // ── Notice ────────────────────────────────────────────────────────────────
+    // One place renders every abnormal response, keyed by the envelope's `type`.
+    // (validation_error | block | warning | server_error). See careplan/errors.py.
+    function Notice({ notice, submitting, onConfirm }) {
+      if (!notice) return null;
+
+      if (notice.type === 'warning') {
+        const warnings = (notice.detail && notice.detail.warnings) || [];
+        return (
+          <div className="notice notice-warning">
+            <p><strong>⚠️ Please review before continuing</strong></p>
+            <ul>{warnings.map((w, i) => <li key={i}>{w.message}</li>)}</ul>
+            <button type="button" onClick={onConfirm} disabled={submitting}>
+              {submitting ? 'Submitting…' : 'Confirm and continue'}
+            </button>
+          </div>
+        );
+      }
+
+      if (notice.type === 'validation_error') {
+        const detail = notice.detail || {};
+        return (
+          <div className="notice notice-error">
+            <p><strong>Please fix the following:</strong></p>
+            <ul>
+              {Object.entries(detail).map(([field, msgs]) => (
+                <li key={field}>
+                  <strong>{LABELS[field] || field}:</strong>{' '}
+                  {Array.isArray(msgs) ? msgs.join(' ') : String(msgs)}
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      }
+
+      // block / server_error / anything else with a message
+      return (
+        <div className="notice notice-error">
+          <p>{notice.message || 'Something went wrong.'}</p>
+        </div>
+      );
+    }
+
     function GenerateForm({ onSubmitted }) {
       const [fields, setFields]   = useState(() =>
         Object.fromEntries(FIELDS.map(f => [f.name, '']))
       );
       const [submitting, setSubmitting] = useState(false);
-      const [error, setError]     = useState(null);
+      const [notice, setNotice]   = useState(null); // null = ok so far; else abnormal response
 
       function handleChange(e) {
         setFields(prev => ({ ...prev, [e.target.name]: e.target.value }));
       }
 
-      async function handleSubmit(e) {
-        e.preventDefault();
-        setSubmitting(true); setError(null);
+      // Single submit path for both the initial POST and the "confirm" resubmit.
+      // Uniform contract: a body with no `type` is success; otherwise `type`
+      // tells us what happened, so there's no per-case if-else ladder here.
+      async function submit(extra) {
+        setSubmitting(true); setNotice(null);
         try {
           const res  = await fetch('/api/generate-careplan/', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(fields),
+            body: JSON.stringify({ ...fields, ...extra }),
           });
           const data = await res.json();
-          if (!res.ok) throw new Error(data.error || 'Server error');
-          onSubmitted(data.care_plan_id);
+          if (!data.type) {            // success
+            onSubmitted(data.care_plan_id);
+            return;
+          }
+          setNotice(data);             // warning / validation_error / block / server_error
         } catch (e) {
-          setError('Submission failed: ' + e.message);
+          setNotice({ type: 'server_error', message: 'Could not reach the server: ' + e.message });
         } finally {
           setSubmitting(false);
         }
       }
+
+      function handleSubmit(e) { e.preventDefault(); submit(); }
+      function handleConfirm() { submit({ acknowledge_warnings: true }); }
 
       return (
         <form onSubmit={handleSubmit}>
@@ -245,7 +304,7 @@
               }
             </div>
           ))}
-          {error && <p className="error">{error}</p>}
+          <Notice notice={notice} submitting={submitting} onConfirm={handleConfirm} />
           <button type="submit" disabled={submitting}>
             {submitting ? 'Submitting…' : 'Generate Care Plan'}
           </button>

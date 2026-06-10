@@ -61,6 +61,8 @@ OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [],
     'UNAUTHENTICATED_USER': None,
+    # Every abnormal response goes through one place — see careplan/errors.py.
+    'EXCEPTION_HANDLER': 'careplan.errors.app_exception_handler',
 }
 
 # Celery
