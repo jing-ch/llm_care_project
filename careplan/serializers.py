@@ -3,21 +3,30 @@ serializers.py — data validation and format conversion (frontend ↔ backend).
 No business logic here; just parsing input and shaping output.
 """
 
+from rest_framework import serializers
 
-def parse_generate_request(body: dict) -> dict:
-    """Extract and normalize fields from the generate_careplan request body."""
-    return {
-        'patient_first_name': body.get('patient_first_name', ''),
-        'patient_last_name': body.get('patient_last_name', ''),
-        'referring_provider': body.get('referring_provider', ''),
-        'referring_provider_npi': body.get('referring_provider_npi', ''),
-        'patient_mrn': body.get('patient_mrn', ''),
-        'primary_diagnosis': body.get('patient_primary_diagnosis', ''),
-        'medication_name': body.get('medication_name', ''),
-        'additional_diagnoses': body.get('additional_diagnoses', ''),
-        'medication_history': body.get('medication_history', ''),
-        'patient_records': body.get('patient_records', ''),
-    }
+
+class GenerateRequestSerializer(serializers.Serializer):
+    """
+    Validate and normalize the generate_careplan request body.
+
+    All fields are optional here (no format rules yet — those arrive in Day 8).
+    `validated_data` is shaped to match exactly what services.submit_careplan_request
+    expects, including the frontend's `patient_primary_diagnosis` → `primary_diagnosis`
+    rename (handled via `source`).
+    """
+    _text = dict(required=False, allow_blank=True, default='')
+
+    patient_first_name = serializers.CharField(**_text)
+    patient_last_name = serializers.CharField(**_text)
+    referring_provider = serializers.CharField(**_text)
+    referring_provider_npi = serializers.CharField(**_text)
+    patient_mrn = serializers.CharField(**_text)
+    patient_primary_diagnosis = serializers.CharField(source='primary_diagnosis', **_text)
+    medication_name = serializers.CharField(**_text)
+    additional_diagnoses = serializers.CharField(**_text)
+    medication_history = serializers.CharField(**_text)
+    patient_records = serializers.CharField(**_text)
 
 
 def serialize_careplan(care_plan) -> dict:

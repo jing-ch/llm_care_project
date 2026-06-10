@@ -1,53 +1,54 @@
-import json
-
 from django.shortcuts import render
 from django.http import JsonResponse, HttpResponse
-from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET
+
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
 
 from . import serializers, services
 
 
 @require_GET
 def home(request):
+    # Plain Django view: serves the HTML form, not a JSON API.
     return render(request, 'careplan/form.html')
 
 
-@csrf_exempt
-@require_POST
+@api_view(['POST'])
 def generate_careplan(request):
-    body = json.loads(request.body)
-    data = serializers.parse_generate_request(body)
-    result = services.submit_careplan_request(data)
-    return JsonResponse(result, status=202)
+    s = serializers.GenerateRequestSerializer(data=request.data)
+    s.is_valid(raise_exception=True)
+    result = services.submit_careplan_request(s.validated_data)
+    return Response(result, status=202)
 
 
-@require_GET
+@api_view(['GET'])
 def get_careplan_status(request, care_plan_id):
     care_plan = services.get_careplan_by_id(care_plan_id)
     if care_plan is None:
-        return JsonResponse({'error': 'not found'}, status=404)
-    return JsonResponse(serializers.serialize_careplan_status(care_plan))
+        return Response({'error': 'not found'}, status=404)
+    return Response(serializers.serialize_careplan_status(care_plan))
 
 
-@require_GET
+@api_view(['GET'])
 def get_careplan(request, care_plan_id):
     care_plan = services.get_careplan_by_id(care_plan_id)
     if care_plan is None:
-        return JsonResponse({'error': 'not found'}, status=404)
-    return JsonResponse(serializers.serialize_careplan(care_plan))
+        return Response({'error': 'not found'}, status=404)
+    return Response(serializers.serialize_careplan(care_plan))
 
 
-@require_GET
+@api_view(['GET'])
 def search_careplans(request):
-    q = (request.GET.get('q') or '').strip().lower()
+    q = (request.query_params.get('q') or '').strip().lower()
     queryset = services.search_careplans(q)
     results = [serializers.serialize_careplan(cp) for cp in queryset]
-    return JsonResponse({'results': results})
+    return Response({'results': results})
 
 
 @require_GET
 def download_careplan(request, care_plan_id):
+    # Plain Django view: returns a .txt file attachment, not JSON.
     care_plan = services.get_careplan_for_download(care_plan_id)
     if care_plan is None:
         return JsonResponse({'error': 'not found'}, status=404)

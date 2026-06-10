@@ -9,6 +9,7 @@ ALLOWED_HOSTS = ['*']
 INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.staticfiles',
+    'rest_framework',
     'careplan',
 ]
 
@@ -53,6 +54,14 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
+
+# DRF — this project has no user accounts, so turn off the default auth
+# machinery (SessionAuthentication / AnonymousUser), which would otherwise try
+# to import django.contrib.auth — an app we deliberately don't install.
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [],
+    'UNAUTHENTICATED_USER': None,
+}
 
 # Celery
 CELERY_BROKER_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
