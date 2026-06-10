@@ -4,7 +4,7 @@ from rest_framework import exceptions as drf_exceptions
 from careplan import errors
 
 
-# ── Exception classes ───────────────────────────────────────────────────────
+# ── Exception classes ──────────────────────────────────────────────────────
 
 def test_base_exception_defaults():
     e = errors.BaseAppException()
